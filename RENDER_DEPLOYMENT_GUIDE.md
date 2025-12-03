@@ -52,7 +52,7 @@ Your deployed blockchain will have:
 │                                 │                                │
 │                    ┌────────────▼────────────┐                   │
 │                    │   blockchain-redis     │                   │
-│                    │   (Redis Database)     │                   │
+│                    │   (Key Value Store)    │                   │
 │                    │   Stores chain data    │                   │
 │                    └─────────────────────────┘                   │
 │                                                                  │
@@ -67,13 +67,13 @@ Your deployed blockchain will have:
 
 ### What Each Service Does:
 
-| Service           | Purpose                                   | URL Example                            |
-| ----------------- | ----------------------------------------- | -------------------------------------- |
-| blockchain-node1  | Blockchain node 1 (mining, chain storage) | https://blockchain-node1.onrender.com  |
-| blockchain-node2  | Blockchain node 2 (mining, chain storage) | https://blockchain-node2.onrender.com  |
-| blockchain-node3  | Blockchain node 3 (mining, chain storage) | https://blockchain-node3.onrender.com  |
-| blockchain-client | Wallet (create keys, make transactions)   | https://blockchain-client.onrender.com |
-| blockchain-redis  | Data persistence (stores blockchain data) | Internal connection only               |
+| Service           | Purpose                                    | URL Example                            |
+| ----------------- | ------------------------------------------ | -------------------------------------- |
+| blockchain-node1  | Blockchain node 1 (mining, chain storage)  | https://blockchain-node1.onrender.com  |
+| blockchain-node2  | Blockchain node 2 (mining, chain storage)  | https://blockchain-node2.onrender.com  |
+| blockchain-node3  | Blockchain node 3 (mining, chain storage)  | https://blockchain-node3.onrender.com  |
+| blockchain-client | Wallet (create keys, make transactions)    | https://blockchain-client.onrender.com |
+| blockchain-redis  | Key Value store (persists blockchain data) | Internal connection only               |
 
 ---
 
@@ -179,7 +179,7 @@ The Blueprint method deploys all 5 services automatically from your `render.yaml
    - blockchain-node2 (Web Service)
    - blockchain-node3 (Web Service)
    - blockchain-client (Web Service)
-   - blockchain-redis (Redis)
+   - blockchain-redis (Key Value)
 3. Click **"Apply"** to start deployment
 
 ### Step 5: Wait for Deployment
@@ -208,15 +208,15 @@ After deployment, go to the **Dashboard** and note down each service URL:
 
 If the Blueprint method doesn't work, deploy each service manually.
 
-### Step 1: Create Redis Database
+### Step 1: Create Key Value Store (Redis)
 
-1. In Dashboard, click **"New +"** → **"Redis"**
+1. In Dashboard, click **"New +"** → **"Key Value"** (formerly Redis)
 2. Configure:
    - **Name:** `blockchain-redis`
    - **Region:** Frankfurt (or closest to you)
    - **Plan:** Free
-3. Click **"Create Redis"**
-4. Copy the **Internal Redis URL** (you'll need this)
+3. Click **"Create Key Value"**
+4. Copy the **Internal Connection String** (you'll need this)
 
 ### Step 2: Create Node 1
 
@@ -512,7 +512,7 @@ Check your usage:
 | Resource     | Free Tier Limit         |
 | ------------ | ----------------------- |
 | Web Services | 750 hours/month         |
-| Redis        | 25 MB                   |
+| Key Value    | 25 MB                   |
 | Auto-sleep   | After 15 min inactivity |
 | Bandwidth    | 100 GB/month            |
 

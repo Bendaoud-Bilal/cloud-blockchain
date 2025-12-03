@@ -115,8 +115,9 @@ services:
   # ============================================
   # Redis Database for Persistence
   # ============================================
-  - type: redis
+  - type: keyvalue
     name: blockchain-redis
     region: frankfurt
     plan: free
     maxmemoryPolicy: allkeys-lru
+    ipAllowList: []  # Allow all IPs (required for Render services to connect)
