@@ -1,0 +1,84 @@
+version: '3.8'
+
+services:
+  # Blockchain Node 1 - Independent Container
+  node1:
+    build:
+      context: .
+      dockerfile: Dockerfile.node1
+    image: blockchain-node1:latest
+    container_name: blockchain-node1
+    hostname: node1
+    ports:
+      - "5001:5000"
+    volumes:
+      - node1_data:/app/data
+    environment:
+      - NODE_ID=node1
+      - FLASK_HOST=0.0.0.0
+    networks:
+      - blockchain-net
+    restart: unless-stopped
+
+  # Blockchain Node 2 - Independent Container
+  node2:
+    build:
+      context: .
+      dockerfile: Dockerfile.node2
+    image: blockchain-node2:latest
+    container_name: blockchain-node2
+    hostname: node2
+    ports:
+      - "5002:5000"
+    volumes:
+      - node2_data:/app/data
+    environment:
+      - NODE_ID=node2
+      - FLASK_HOST=0.0.0.0
+    networks:
+      - blockchain-net
+    restart: unless-stopped
+
+  # Blockchain Node 3 - Independent Container
+  node3:
+    build:
+      context: .
+      dockerfile: Dockerfile.node3
+    image: blockchain-node3:latest
+    container_name: blockchain-node3
+    hostname: node3
+    ports:
+      - "5003:5000"
+    volumes:
+      - node3_data:/app/data
+    environment:
+      - NODE_ID=node3
+      - FLASK_HOST=0.0.0.0
+    networks:
+      - blockchain-net
+    restart: unless-stopped
+
+  # Blockchain Client (Wallet) - Independent Container
+  client:
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    image: blockchain-client:latest
+    container_name: blockchain-client
+    hostname: client
+    ports:
+      - "8080:8080"
+    environment:
+      - FLASK_HOST=0.0.0.0
+    networks:
+      - blockchain-net
+    restart: unless-stopped
+
+networks:
+  blockchain-net:
+    driver: bridge
+
+volumes:
+  node1_data:
+  node2_data:
+  node3_data:

@@ -1,0 +1,26 @@
+# Dockerfile for Blockchain Client (Wallet)
+FROM python:3.9-slim
+
+LABEL maintainer="Blockchain Client"
+LABEL description="Independent blockchain wallet client"
+
+WORKDIR /app
+
+# Copy requirements and install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy blockchain client files
+COPY blockchain_client/ ./blockchain_client/
+
+# Set environment variables
+ENV FLASK_HOST=0.0.0.0
+ENV FLASK_PORT=8080
+
+WORKDIR /app/blockchain_client
+
+# Expose default port
+EXPOSE 8080
+
+# Run the blockchain client
+CMD ["python", "blockchain_client.py", "-p", "8080"]
