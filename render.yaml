@@ -30,11 +30,6 @@ services:
         sync: false  # Set manually after first deploy
       - key: PEER_NODES
         sync: false  # Set manually: https://blockchain-node2.onrender.com,https://blockchain-node3.onrender.com
-      - key: REDIS_URL
-        fromService:
-          name: blockchain-redis
-          type: redis
-          property: connectionString
       - key: RESET_SECRET
         generateValue: true
 
@@ -59,11 +54,6 @@ services:
         sync: false
       - key: PEER_NODES
         sync: false  # Set manually: https://blockchain-node1.onrender.com,https://blockchain-node3.onrender.com
-      - key: REDIS_URL
-        fromService:
-          name: blockchain-redis
-          type: redis
-          property: connectionString
       - key: RESET_SECRET
         generateValue: true
 
@@ -88,11 +78,6 @@ services:
         sync: false
       - key: PEER_NODES
         sync: false  # Set manually: https://blockchain-node1.onrender.com,https://blockchain-node2.onrender.com
-      - key: REDIS_URL
-        fromService:
-          name: blockchain-redis
-          type: redis
-          property: connectionString
       - key: RESET_SECRET
         generateValue: true
 
@@ -111,13 +96,3 @@ services:
     envVars:
       - key: FLASK_HOST
         value: 0.0.0.0
-
-  # ============================================
-  # Redis Database for Persistence
-  # ============================================
-  - type: keyvalue
-    name: blockchain-redis
-    region: frankfurt
-    plan: free
-    maxmemoryPolicy: allkeys-lru
-    ipAllowList: []  # Allow all IPs (required for Render services to connect)
