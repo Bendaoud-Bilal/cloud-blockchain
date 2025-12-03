@@ -9,7 +9,7 @@ start-blockchain.cmd - Builds, starts, and registers all nodes
 stop-blockchain.cmd - Stops the network
 ------------------------------------------------------------
 To Test Transactions
-Open http://localhost:8081 (Wallet)
+Open cc (Wallet)
 Generate a wallet (get public/private keys)
 Make a transaction to another address
 Submit to any node
