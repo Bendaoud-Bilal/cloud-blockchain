@@ -1,0 +1,17 @@
+Access Points
+Wallet Client: http://localhost:8081
+Node 1: http://localhost:5001
+Node 2: http://localhost:5002
+Node 3: http://localhost:5003
+-----------------------------------------------------------
+Scripts Created
+start-blockchain.cmd - Builds, starts, and registers all nodes
+stop-blockchain.cmd - Stops the network
+------------------------------------------------------------
+To Test Transactions
+Open http://localhost:8081 (Wallet)
+Generate a wallet (get public/private keys)
+Make a transaction to another address
+Submit to any node
+Mine on any node
+Call /nodes/resolve on other nodes to sync
