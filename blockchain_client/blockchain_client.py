@@ -6,18 +6,20 @@ description     : A blockchain client implemenation, with the following features
 author          : Adil Moujahid
 date_created    : 20180212
 date_modified   : 20180309
-version         : 0.3
+version         : 0.4 (Cloud-Ready with Gunicorn)
 usage           : python blockchain_client.py
                   python blockchain_client.py -p 8080
                   python blockchain_client.py --port 8080
-python_version  : 3.6.1
+                  gunicorn --bind 0.0.0.0:$PORT blockchain_client:app
+python_version  : 3.9+
 Comments        : Wallet generation and transaction signature is based on [1]
+                  Modified for cloud deployment with HTTPS support.
 References      : [1] https://github.com/julienr/ipynb_playground/blob/master/bitcoin/dumbcoin/dumbcoin.ipynb
 '''
 
 from collections import OrderedDict
-
 import binascii
+import os
 
 import Crypto
 import Crypto.Random
@@ -27,6 +29,7 @@ from Crypto.Signature import PKCS1_v1_5
 
 import requests
 from flask import Flask, jsonify, request, render_template
+from flask_cors import CORS
 
 
 class Transaction:
@@ -57,10 +60,16 @@ class Transaction:
 
 
 app = Flask(__name__)
+CORS(app)
 
 @app.route('/')
 def index():
 	return render_template('./index.html')
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint for Render"""
+    return jsonify({'status': 'healthy', 'service': 'blockchain-client'}), 200
 
 @app.route('/make/transaction')
 def make_transaction():
@@ -99,12 +108,13 @@ def generate_transaction():
 
 if __name__ == '__main__':
     from argparse import ArgumentParser
-    import os
 
     parser = ArgumentParser()
     parser.add_argument('-p', '--port', default=8080, type=int, help='port to listen on')
     args = parser.parse_args()
-    port = args.port
+    
+    # Render provides PORT env variable
+    port = int(os.environ.get('PORT', args.port))
 
     # Use 0.0.0.0 for Docker, 127.0.0.1 for local development
     host = os.environ.get('FLASK_HOST', '0.0.0.0')

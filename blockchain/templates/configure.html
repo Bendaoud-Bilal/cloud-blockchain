@@ -136,8 +136,9 @@
             var node = "";
             
             for (i = 0; i < response['nodes'].length; i++) { 
-              //node = "<li>" + response['nodes'][i] + "</li>";
-              node = "<li> <a href=http://" + response['nodes'][i] + ">" + response['nodes'][i] +"</a></li>";
+              // Nodes now stored as full URLs with protocol
+              var nodeUrl = response['nodes'][i];
+              node = "<li> <a href=\"" + nodeUrl + "\" target=\"_blank\">" + nodeUrl +"</a></li>";
               document.getElementById("list_nodes").innerHTML += node;
 
             };

@@ -1,0 +1,122 @@
+# Render Blueprint for Blockchain Deployment
+# Deploy with: https://render.com/docs/infrastructure-as-code
+
+# ============================================
+# IMPORTANT: After first deploy, you must:
+# 1. Get the actual URLs from Render dashboard
+# 2. Update OWN_URL and PEER_NODES for each service
+# 3. Redeploy the services
+# ============================================
+
+services:
+  # ============================================
+  # Blockchain Node 1
+  # ============================================
+  - type: web
+    name: blockchain-node1
+    runtime: python
+    region: frankfurt  # Change to your preferred region
+    plan: free
+    rootDir: blockchain
+    buildCommand: pip install -r ../requirements.txt
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 2 --timeout 120 blockchain:app
+    healthCheckPath: /health
+    envVars:
+      - key: FLASK_HOST
+        value: 0.0.0.0
+      - key: NODE_ID
+        value: node1
+      - key: OWN_URL
+        sync: false  # Set manually after first deploy
+      - key: PEER_NODES
+        sync: false  # Set manually: https://blockchain-node2.onrender.com,https://blockchain-node3.onrender.com
+      - key: REDIS_URL
+        fromService:
+          name: blockchain-redis
+          type: redis
+          property: connectionString
+      - key: RESET_SECRET
+        generateValue: true
+
+  # ============================================
+  # Blockchain Node 2
+  # ============================================
+  - type: web
+    name: blockchain-node2
+    runtime: python
+    region: frankfurt
+    plan: free
+    rootDir: blockchain
+    buildCommand: pip install -r ../requirements.txt
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 2 --timeout 120 blockchain:app
+    healthCheckPath: /health
+    envVars:
+      - key: FLASK_HOST
+        value: 0.0.0.0
+      - key: NODE_ID
+        value: node2
+      - key: OWN_URL
+        sync: false
+      - key: PEER_NODES
+        sync: false  # Set manually: https://blockchain-node1.onrender.com,https://blockchain-node3.onrender.com
+      - key: REDIS_URL
+        fromService:
+          name: blockchain-redis
+          type: redis
+          property: connectionString
+      - key: RESET_SECRET
+        generateValue: true
+
+  # ============================================
+  # Blockchain Node 3
+  # ============================================
+  - type: web
+    name: blockchain-node3
+    runtime: python
+    region: frankfurt
+    plan: free
+    rootDir: blockchain
+    buildCommand: pip install -r ../requirements.txt
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 2 --timeout 120 blockchain:app
+    healthCheckPath: /health
+    envVars:
+      - key: FLASK_HOST
+        value: 0.0.0.0
+      - key: NODE_ID
+        value: node3
+      - key: OWN_URL
+        sync: false
+      - key: PEER_NODES
+        sync: false  # Set manually: https://blockchain-node1.onrender.com,https://blockchain-node2.onrender.com
+      - key: REDIS_URL
+        fromService:
+          name: blockchain-redis
+          type: redis
+          property: connectionString
+      - key: RESET_SECRET
+        generateValue: true
+
+  # ============================================
+  # Blockchain Client (Wallet)
+  # ============================================
+  - type: web
+    name: blockchain-client
+    runtime: python
+    region: frankfurt
+    plan: free
+    rootDir: blockchain_client
+    buildCommand: pip install -r ../requirements.txt
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 2 --timeout 120 blockchain_client:app
+    healthCheckPath: /health
+    envVars:
+      - key: FLASK_HOST
+        value: 0.0.0.0
+
+  # ============================================
+  # Redis Database for Persistence
+  # ============================================
+  - type: redis
+    name: blockchain-redis
+    region: frankfurt
+    plan: free
+    maxmemoryPolicy: allkeys-lru

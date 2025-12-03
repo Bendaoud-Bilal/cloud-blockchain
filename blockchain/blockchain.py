@@ -4,22 +4,27 @@ description     : A blockchain implemenation
 author          : Adil Moujahid
 date_created    : 20180212
 date_modified   : 20180309
-version         : 0.5
+version         : 0.6 (Cloud-Ready with Redis)
 usage           : python blockchain.py
                   python blockchain.py -p 5000
                   python blockchain.py --port 5000
-python_version  : 3.6.1
+                  gunicorn --bind 0.0.0.0:$PORT blockchain:app
+python_version  : 3.9+
 Comments        : The blockchain implementation is mostly based on [1]. 
-                  I made a few modifications to the original code in order to add RSA encryption to the transactions 
-                  based on [2], changed the proof of work algorithm, and added some Flask routes to interact with the 
-                  blockchain from the dashboards
+                  Modified for cloud deployment with Redis persistence and HTTPS support.
 References      : [1] https://github.com/dvf/blockchain/blob/master/blockchain.py
                   [2] https://github.com/julienr/ipynb_playground/blob/master/bitcoin/dumbcoin/dumbcoin.ipynb
 '''
 
 from collections import OrderedDict
-
 import binascii
+import hashlib
+import json
+import os
+import threading
+from time import time
+from urllib.parse import urlparse
+from uuid import uuid4
 
 import Crypto
 import Crypto.Random
@@ -27,16 +32,17 @@ from Crypto.Hash import SHA
 from Crypto.PublicKey import RSA
 from Crypto.Signature import PKCS1_v1_5
 
-import hashlib
-import json
-from time import time
-from urllib.parse import urlparse
-from uuid import uuid4
-
 import requests
 from flask import Flask, jsonify, request, render_template
 from flask_cors import CORS
 
+# Redis for persistence (optional - falls back to in-memory if not available)
+try:
+    import redis
+    REDIS_AVAILABLE = True
+except ImportError:
+    REDIS_AVAILABLE = False
+    print("Redis not available, using in-memory storage")
 
 
 MINING_SENDER = "THE BLOCKCHAIN"
@@ -44,32 +50,183 @@ MINING_REWARD = 1
 MINING_DIFFICULTY = 2
 
 
+class RedisStorage:
+    """Redis-based persistent storage for blockchain data"""
+    
+    def __init__(self, redis_url=None):
+        self.redis_url = redis_url or os.environ.get('REDIS_URL')
+        self.client = None
+        self.prefix = os.environ.get('NODE_ID', 'node')
+        
+        if self.redis_url and REDIS_AVAILABLE:
+            try:
+                self.client = redis.from_url(self.redis_url, decode_responses=True)
+                self.client.ping()
+                print(f"Connected to Redis for {self.prefix}")
+            except Exception as e:
+                print(f"Failed to connect to Redis: {e}")
+                self.client = None
+    
+    def _key(self, name):
+        return f"blockchain:{self.prefix}:{name}"
+    
+    def save_chain(self, chain):
+        if self.client:
+            try:
+                self.client.set(self._key('chain'), json.dumps(chain))
+            except Exception as e:
+                print(f"Failed to save chain: {e}")
+    
+    def load_chain(self):
+        if self.client:
+            try:
+                data = self.client.get(self._key('chain'))
+                if data:
+                    return json.loads(data)
+            except Exception as e:
+                print(f"Failed to load chain: {e}")
+        return None
+    
+    def save_transactions(self, transactions):
+        if self.client:
+            try:
+                tx_list = [dict(tx) for tx in transactions]
+                self.client.set(self._key('transactions'), json.dumps(tx_list))
+            except Exception as e:
+                print(f"Failed to save transactions: {e}")
+    
+    def load_transactions(self):
+        if self.client:
+            try:
+                data = self.client.get(self._key('transactions'))
+                if data:
+                    tx_list = json.loads(data)
+                    return [OrderedDict(tx) for tx in tx_list]
+            except Exception as e:
+                print(f"Failed to load transactions: {e}")
+        return None
+    
+    def save_nodes(self, nodes):
+        if self.client:
+            try:
+                self.client.set(self._key('nodes'), json.dumps(list(nodes)))
+            except Exception as e:
+                print(f"Failed to save nodes: {e}")
+    
+    def load_nodes(self):
+        if self.client:
+            try:
+                data = self.client.get(self._key('nodes'))
+                if data:
+                    return set(json.loads(data))
+            except Exception as e:
+                print(f"Failed to load nodes: {e}")
+        return None
+    
+    def save_node_id(self, node_id):
+        if self.client:
+            try:
+                self.client.set(self._key('node_id'), node_id)
+            except Exception as e:
+                print(f"Failed to save node_id: {e}")
+    
+    def load_node_id(self):
+        if self.client:
+            try:
+                return self.client.get(self._key('node_id'))
+            except Exception as e:
+                print(f"Failed to load node_id: {e}")
+        return None
+    
+    def clear_all(self):
+        """Clear all data for this node"""
+        if self.client:
+            try:
+                keys = self.client.keys(f"blockchain:{self.prefix}:*")
+                if keys:
+                    self.client.delete(*keys)
+                return True
+            except Exception as e:
+                print(f"Failed to clear data: {e}")
+        return False
+
+
 class Blockchain:
 
-    def __init__(self):
+    def __init__(self, storage=None):
+        self.storage = storage
         
-        self.transactions = []
+        # Try to load from Redis, or initialize fresh
         self.chain = []
+        self.transactions = []
         self.nodes = set()
-        #Generate random number to be used as node_id
-        self.node_id = str(uuid4()).replace('-', '')
-        #Create genesis block
-        self.create_block(0, '00')
-
+        
+        # Load or generate node_id
+        if self.storage:
+            saved_node_id = self.storage.load_node_id()
+            if saved_node_id:
+                self.node_id = saved_node_id
+            else:
+                self.node_id = str(uuid4()).replace('-', '')
+                self.storage.save_node_id(self.node_id)
+            
+            # Load saved data
+            saved_chain = self.storage.load_chain()
+            if saved_chain:
+                self.chain = saved_chain
+            
+            saved_transactions = self.storage.load_transactions()
+            if saved_transactions:
+                self.transactions = saved_transactions
+            
+            saved_nodes = self.storage.load_nodes()
+            if saved_nodes:
+                self.nodes = saved_nodes
+        else:
+            self.node_id = str(uuid4()).replace('-', '')
+        
+        # Create genesis block if chain is empty
+        if not self.chain:
+            self.create_block(0, '00')
+    
+    def _persist(self):
+        """Save current state to Redis"""
+        if self.storage:
+            self.storage.save_chain(self.chain)
+            self.storage.save_transactions(self.transactions)
+            self.storage.save_nodes(self.nodes)
 
     def register_node(self, node_url):
         """
         Add a new node to the list of nodes
+        Stores full URL with protocol for HTTPS support
         """
-        #Checking node_url has valid format
+        if not node_url:
+            return
+            
         parsed_url = urlparse(node_url)
-        if parsed_url.netloc:
-            self.nodes.add(parsed_url.netloc)
+        
+        if parsed_url.scheme and parsed_url.netloc:
+            # Full URL provided (e.g., https://node1.onrender.com)
+            full_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
+            self.nodes.add(full_url)
+        elif parsed_url.netloc:
+            # URL without scheme, default to https for cloud
+            self.nodes.add(f"https://{parsed_url.netloc}")
         elif parsed_url.path:
-            # Accepts an URL without scheme like '192.168.0.5:5000'.
-            self.nodes.add(parsed_url.path)
+            # Just host:port format
+            path = parsed_url.path
+            if path.startswith('http'):
+                self.nodes.add(path)
+            elif ':' in path:
+                # Local docker format like node1:5000
+                self.nodes.add(f"http://{path}")
+            else:
+                self.nodes.add(f"https://{path}")
         else:
             raise ValueError('Invalid URL')
+        
+        self._persist()
 
 
     def verify_transaction_signature(self, sender_address, signature, transaction):
@@ -91,11 +248,12 @@ class Blockchain:
                                     'recipient_address': recipient_address,
                                     'value': value})
 
-        #Reward for mining a block
+        # Reward for mining a block
         if sender_address == MINING_SENDER:
             self.transactions.append(transaction)
+            self._persist()
             return len(self.chain) + 1
-        #Manages transactions from wallet to another wallet
+        # Manages transactions from wallet to another wallet
         else:
             transaction_verification = self.verify_transaction_signature(sender_address, signature, transaction)
             if transaction_verification:
@@ -106,6 +264,7 @@ class Blockchain:
                         existing_tx['value'] == value):
                         return len(self.chain) + 1  # Already exists, don't add again
                 self.transactions.append(transaction)
+                self._persist()
                 return len(self.chain) + 1
             else:
                 return False
@@ -116,13 +275,13 @@ class Blockchain:
         """
         for node in self.nodes:
             try:
-                url = f'http://{node}/transactions/receive'
+                url = f'{node}/transactions/receive'
                 requests.post(url, data={
                     'sender_address': sender_address,
                     'recipient_address': recipient_address,
                     'amount': value,
                     'signature': signature
-                }, timeout=5)
+                }, timeout=10)
             except Exception as e:
                 print(f"Failed to broadcast to {node}: {e}")
 
@@ -130,15 +289,30 @@ class Blockchain:
         """
         Sync pending transactions from all registered nodes
         """
-        all_transactions = []
         for node in self.nodes:
             try:
-                response = requests.get(f'http://{node}/transactions/get', timeout=5)
+                response = requests.get(f'{node}/transactions/get', timeout=10)
                 if response.status_code == 200:
                     node_transactions = response.json().get('transactions', [])
-                    all_transactions.extend(node_transactions)
+                    for tx in node_transactions:
+                        # Check if transaction already exists
+                        exists = False
+                        for existing_tx in self.transactions:
+                            if (existing_tx['sender_address'] == tx['sender_address'] and 
+                                existing_tx['recipient_address'] == tx['recipient_address'] and
+                                existing_tx['value'] == tx['value']):
+                                exists = True
+                                break
+                        if not exists and tx.get('sender_address') != MINING_SENDER:
+                            self.transactions.append(OrderedDict({
+                                'sender_address': tx['sender_address'],
+                                'recipient_address': tx['recipient_address'],
+                                'value': tx['value']
+                            }))
             except Exception as e:
                 print(f"Failed to sync from {node}: {e}")
+        
+        self._persist()
 
 
     def create_block(self, nonce, previous_hash):
@@ -155,6 +329,7 @@ class Blockchain:
         self.transactions = []
 
         self.chain.append(block)
+        self._persist()
         return block
 
 
@@ -235,31 +410,75 @@ class Blockchain:
 
         # Grab and verify the chains from all the nodes in our network
         for node in neighbours:
-            print('http://' + node + '/chain')
-            response = requests.get('http://' + node + '/chain')
+            try:
+                print(f'{node}/chain')
+                response = requests.get(f'{node}/chain', timeout=10)
 
-            if response.status_code == 200:
-                length = response.json()['length']
-                chain = response.json()['chain']
+                if response.status_code == 200:
+                    length = response.json()['length']
+                    chain = response.json()['chain']
 
-                # Check if the length is longer and the chain is valid
-                if length > max_length and self.valid_chain(chain):
-                    max_length = length
-                    new_chain = chain
+                    # Check if the length is longer and the chain is valid
+                    if length > max_length and self.valid_chain(chain):
+                        max_length = length
+                        new_chain = chain
+            except Exception as e:
+                print(f"Failed to get chain from {node}: {e}")
 
         # Replace our chain if we discovered a new, valid chain longer than ours
         if new_chain:
             self.chain = new_chain
+            self._persist()
             return True
 
         return False
+
+# Initialize Redis storage
+storage = RedisStorage()
 
 # Instantiate the Node
 app = Flask(__name__)
 CORS(app)
 
-# Instantiate the Blockchain
-blockchain = Blockchain()
+# Instantiate the Blockchain with storage
+blockchain = Blockchain(storage=storage)
+
+
+def register_with_peers():
+    """
+    Auto-register this node with all configured peer nodes on startup
+    """
+    import time as time_module
+    time_module.sleep(10)  # Wait for other services to start
+    
+    peer_nodes = os.environ.get('PEER_NODES', '')
+    own_url = os.environ.get('OWN_URL', '')
+    
+    if not peer_nodes:
+        print("No PEER_NODES configured, skipping auto-registration")
+        return
+    
+    peers = [p.strip() for p in peer_nodes.split(',') if p.strip()]
+    
+    for peer in peers:
+        try:
+            # Register peer with this node
+            blockchain.register_node(peer)
+            print(f"Added peer: {peer}")
+            
+            # Register this node with the peer (if OWN_URL is set)
+            if own_url:
+                response = requests.post(
+                    f'{peer}/nodes/register-peer',
+                    json={'peer_url': own_url},
+                    timeout=15
+                )
+                if response.status_code in [200, 201]:
+                    print(f"Successfully registered with peer: {peer}")
+                else:
+                    print(f"Failed to register with peer {peer}: {response.status_code}")
+        except Exception as e:
+            print(f"Error connecting to peer {peer}: {e}")
 
 @app.route('/')
 def index():
@@ -268,6 +487,17 @@ def index():
 @app.route('/configure')
 def configure():
     return render_template('./configure.html')
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint for Render"""
+    return jsonify({
+        'status': 'healthy',
+        'node_id': blockchain.node_id,
+        'chain_length': len(blockchain.chain),
+        'pending_transactions': len(blockchain.transactions),
+        'registered_nodes': len(blockchain.nodes)
+    }), 200
 
 
 
@@ -341,28 +571,7 @@ def full_chain():
 @app.route('/mine', methods=['GET'])
 def mine():
     # First sync pending transactions from all nodes before mining
-    for node in blockchain.nodes:
-        try:
-            response = requests.get(f'http://{node}/transactions/get', timeout=5)
-            if response.status_code == 200:
-                node_transactions = response.json().get('transactions', [])
-                for tx in node_transactions:
-                    # Check if transaction already exists
-                    exists = False
-                    for existing_tx in blockchain.transactions:
-                        if (existing_tx['sender_address'] == tx['sender_address'] and 
-                            existing_tx['recipient_address'] == tx['recipient_address'] and
-                            existing_tx['value'] == tx['value']):
-                            exists = True
-                            break
-                    if not exists and tx['sender_address'] != MINING_SENDER:
-                        blockchain.transactions.append(OrderedDict({
-                            'sender_address': tx['sender_address'],
-                            'recipient_address': tx['recipient_address'],
-                            'value': tx['value']
-                        }))
-        except Exception as e:
-            print(f"Failed to sync transactions from {node}: {e}")
+    blockchain.sync_pending_transactions()
 
     # We run the proof of work algorithm to get the next proof...
     last_block = blockchain.chain[-1]
@@ -378,7 +587,7 @@ def mine():
     # Notify all nodes to sync their chains
     for node in blockchain.nodes:
         try:
-            requests.get(f'http://{node}/nodes/resolve', timeout=5)
+            requests.get(f'{node}/nodes/resolve', timeout=10)
         except Exception as e:
             print(f"Failed to notify {node}: {e}")
 
@@ -434,19 +643,69 @@ def get_nodes():
     response = {'nodes': nodes}
     return jsonify(response), 200
 
+@app.route('/nodes/register-peer', methods=['POST'])
+def register_peer():
+    """
+    Endpoint for a peer to register itself with this node
+    """
+    values = request.json or request.form
+    peer_url = values.get('peer_url')
+    
+    if not peer_url:
+        return jsonify({'error': 'Please supply a peer_url'}), 400
+    
+    try:
+        blockchain.register_node(peer_url)
+        return jsonify({
+            'message': 'Peer registered successfully',
+            'total_nodes': list(blockchain.nodes)
+        }), 201
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+@app.route('/reset', methods=['POST'])
+def reset_blockchain():
+    """
+    Reset the blockchain (clear all data)
+    Requires a secret key for security
+    """
+    values = request.json or request.form
+    secret = values.get('secret')
+    expected_secret = os.environ.get('RESET_SECRET', 'blockchain-reset-secret')
+    
+    if secret != expected_secret:
+        return jsonify({'error': 'Invalid secret'}), 403
+    
+    # Clear Redis data
+    if storage.clear_all():
+        # Reinitialize blockchain
+        blockchain.chain = []
+        blockchain.transactions = []
+        blockchain.nodes = set()
+        blockchain.create_block(0, '00')
+        
+        return jsonify({'message': 'Blockchain reset successfully'}), 200
+    else:
+        return jsonify({'error': 'Failed to reset (Redis may not be connected)'}), 500
+
+
+# Start peer registration in background when app starts
+peer_thread = threading.Thread(target=register_with_peers, daemon=True)
+peer_thread.start()
 
 
 if __name__ == '__main__':
     from argparse import ArgumentParser
-    import os
 
     parser = ArgumentParser()
     parser.add_argument('-p', '--port', default=5000, type=int, help='port to listen on')
     args = parser.parse_args()
-    port = args.port
-
-    # Use 0.0.0.0 for Docker, 127.0.0.1 for local development
+    
+    # Render provides PORT env variable
+    port = int(os.environ.get('PORT', args.port))
+    
     host = os.environ.get('FLASK_HOST', '0.0.0.0')
+    
     app.run(host=host, port=port)
 
 
