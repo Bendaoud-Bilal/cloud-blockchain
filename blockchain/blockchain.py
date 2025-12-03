@@ -99,10 +99,46 @@ class Blockchain:
         else:
             transaction_verification = self.verify_transaction_signature(sender_address, signature, transaction)
             if transaction_verification:
+                # Check if transaction already exists (avoid duplicates from broadcasting)
+                for existing_tx in self.transactions:
+                    if (existing_tx['sender_address'] == sender_address and 
+                        existing_tx['recipient_address'] == recipient_address and
+                        existing_tx['value'] == value):
+                        return len(self.chain) + 1  # Already exists, don't add again
                 self.transactions.append(transaction)
                 return len(self.chain) + 1
             else:
                 return False
+
+    def broadcast_transaction(self, sender_address, recipient_address, value, signature):
+        """
+        Broadcast a transaction to all registered nodes
+        """
+        for node in self.nodes:
+            try:
+                url = f'http://{node}/transactions/receive'
+                requests.post(url, data={
+                    'sender_address': sender_address,
+                    'recipient_address': recipient_address,
+                    'amount': value,
+                    'signature': signature
+                }, timeout=5)
+            except Exception as e:
+                print(f"Failed to broadcast to {node}: {e}")
+
+    def sync_pending_transactions(self):
+        """
+        Sync pending transactions from all registered nodes
+        """
+        all_transactions = []
+        for node in self.nodes:
+            try:
+                response = requests.get(f'http://{node}/transactions/get', timeout=5)
+                if response.status_code == 200:
+                    node_transactions = response.json().get('transactions', [])
+                    all_transactions.extend(node_transactions)
+            except Exception as e:
+                print(f"Failed to sync from {node}: {e}")
 
 
     def create_block(self, nonce, previous_hash):
@@ -250,7 +286,40 @@ def new_transaction():
         response = {'message': 'Invalid Transaction!'}
         return jsonify(response), 406
     else:
+        # Broadcast transaction to all other nodes
+        blockchain.broadcast_transaction(
+            values['sender_address'], 
+            values['recipient_address'], 
+            values['amount'], 
+            values['signature']
+        )
         response = {'message': 'Transaction will be added to Block '+ str(transaction_result)}
+        return jsonify(response), 201
+
+@app.route('/transactions/receive', methods=['POST'])
+def receive_transaction():
+    """
+    Receive a broadcasted transaction from another node
+    """
+    values = request.form
+
+    required = ['sender_address', 'recipient_address', 'amount', 'signature']
+    if not all(k in values for k in required):
+        return 'Missing values', 400
+    
+    # Add transaction without broadcasting again (to avoid infinite loop)
+    transaction_result = blockchain.submit_transaction(
+        values['sender_address'], 
+        values['recipient_address'], 
+        values['amount'], 
+        values['signature']
+    )
+
+    if transaction_result == False:
+        response = {'message': 'Invalid Transaction!'}
+        return jsonify(response), 406
+    else:
+        response = {'message': 'Transaction received'}
         return jsonify(response), 201
 
 @app.route('/transactions/get', methods=['GET'])
@@ -271,6 +340,30 @@ def full_chain():
 
 @app.route('/mine', methods=['GET'])
 def mine():
+    # First sync pending transactions from all nodes before mining
+    for node in blockchain.nodes:
+        try:
+            response = requests.get(f'http://{node}/transactions/get', timeout=5)
+            if response.status_code == 200:
+                node_transactions = response.json().get('transactions', [])
+                for tx in node_transactions:
+                    # Check if transaction already exists
+                    exists = False
+                    for existing_tx in blockchain.transactions:
+                        if (existing_tx['sender_address'] == tx['sender_address'] and 
+                            existing_tx['recipient_address'] == tx['recipient_address'] and
+                            existing_tx['value'] == tx['value']):
+                            exists = True
+                            break
+                    if not exists and tx['sender_address'] != MINING_SENDER:
+                        blockchain.transactions.append(OrderedDict({
+                            'sender_address': tx['sender_address'],
+                            'recipient_address': tx['recipient_address'],
+                            'value': tx['value']
+                        }))
+        except Exception as e:
+            print(f"Failed to sync transactions from {node}: {e}")
+
     # We run the proof of work algorithm to get the next proof...
     last_block = blockchain.chain[-1]
     nonce = blockchain.proof_of_work()
@@ -281,6 +374,13 @@ def mine():
     # Forge the new Block by adding it to the chain
     previous_hash = blockchain.hash(last_block)
     block = blockchain.create_block(nonce, previous_hash)
+
+    # Notify all nodes to sync their chains
+    for node in blockchain.nodes:
+        try:
+            requests.get(f'http://{node}/nodes/resolve', timeout=5)
+        except Exception as e:
+            print(f"Failed to notify {node}: {e}")
 
     response = {
         'message': "New Block Forged",
